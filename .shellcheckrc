@@ -1,0 +1,5 @@
+# Shellcheck configuration for podman-nanoclaw-runtime
+# https://www.shellcheck.net/wiki/
+
+# SC1091: Not following sourced files (they may not exist at lint time)
+disable=SC1091

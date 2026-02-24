@@ -1,0 +1,6 @@
+# Local Copilot instructions (personal, not repo-wide)
+.github/copilot-instructions.md
+.github/instructions/
+
+# Private local files (notes, plans — not for public commits)
+.local/
