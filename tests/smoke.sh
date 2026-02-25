@@ -160,7 +160,10 @@ test_container_starts() {
     local exit_code=0
 
     # Use timeout to prevent hanging — 60s allows for TypeScript compilation
+    # --userns=keep-id maps host UID to container's node user (UID 1000),
+    # so bind-mounted directories are writable inside the container.
     output=$(echo '{}' | timeout 60 podman run -i --rm \
+        --userns=keep-id \
         --name "${CONTAINER_NAME}-start" \
         -v "${TEMP_DIR}:/workspace/group" \
         -v "${claude_dir}:/home/node/.claude" \
@@ -225,7 +228,10 @@ ENDJSON
 
     # Run the full agent — allow up to 180s for the agent to respond
     # The container entrypoint: compiles TypeScript, reads JSON from stdin, runs agent
+    # --userns=keep-id maps host UID to container's node user (UID 1000),
+    # so bind-mounted directories are writable inside the container.
     output=$(echo "$input_json" | timeout 180 podman run -i --rm \
+        --userns=keep-id \
         --name "$CONTAINER_NAME" \
         -v "${TEMP_DIR}:/workspace/group" \
         -v "${NANOCLAW_DIR}:/workspace/project:ro" \

@@ -207,7 +207,10 @@ run_agent() {
     local output=""
     local exit_code=0
 
+    # --userns=keep-id maps host UID to container's node user (UID 1000),
+    # so bind-mounted directories are writable inside the container.
     output=$(echo "$input_json" | timeout "$TIMEOUT_SECONDS" podman run -i --rm \
+        --userns=keep-id \
         --name "$container_name" \
         -v "${WORKSPACE_DIR}:/workspace/group" \
         -v "${NANOCLAW_DIR}:/workspace/project:ro" \
