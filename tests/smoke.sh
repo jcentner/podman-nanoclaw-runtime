@@ -103,18 +103,70 @@ skip() {
 # ---------------------------------------------------------------------------
 
 cleanup() {
+    # Kill any leftover smoke test containers.
+    # Use a name prefix to catch both "-start" and main containers.
+    local name
+    for name in "$CONTAINER_NAME" "${CONTAINER_NAME}-start"; do
+        if podman container exists "$name" 2>/dev/null; then
+            podman kill "$name" &>/dev/null || true
+            podman rm -f "$name" &>/dev/null || true
+        fi
+    done
+
     # Remove temp directory if it exists
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
     fi
-
-    # Remove any leftover container (shouldn't exist with --rm, but defensive)
-    if podman container exists "$CONTAINER_NAME" 2>/dev/null; then
-        podman rm -f "$CONTAINER_NAME" &>/dev/null || true
-    fi
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Helper: run a container with a hard timeout via podman stop
+# ---------------------------------------------------------------------------
+# Usage: run_container_with_timeout <timeout_seconds> <container_name> <podman_run_args...>
+#   Writes stdout to $CONTAINER_STDOUT and stderr to $CONTAINER_STDERR (temp files).
+#   Sets $CONTAINER_EXIT_CODE.
+#
+# Why not `timeout podman run`?
+#   `timeout` kills the podman CLI client but the container keeps running as
+#   a separate process (managed by conmon). This leaves orphans that can't be
+#   stopped with Ctrl+C, requiring `wsl --shutdown` or manual `podman kill`.
+#   Instead, we run in the background and use `podman stop` for reliable cleanup.
+
+CONTAINER_STDOUT=""
+CONTAINER_STDERR=""
+CONTAINER_EXIT_CODE=0
+
+run_container_with_timeout() {
+    local timeout_secs="$1" cname="$2"
+    shift 2
+
+    CONTAINER_STDOUT=$(mktemp)
+    CONTAINER_STDERR=$(mktemp)
+    CONTAINER_EXIT_CODE=0
+
+    # Launch podman run in the background
+    podman run --name "$cname" "$@" \
+        >"$CONTAINER_STDOUT" 2>"$CONTAINER_STDERR" &
+    local pid=$!
+
+    # Watchdog: kill after timeout
+    (
+        sleep "$timeout_secs"
+        if kill -0 "$pid" 2>/dev/null; then
+            podman stop -t 5 "$cname" &>/dev/null || true
+        fi
+    ) &
+    local watchdog_pid=$!
+
+    # Wait for podman run to finish (or be killed by watchdog)
+    wait "$pid" 2>/dev/null || CONTAINER_EXIT_CODE=$?
+
+    # Clean up watchdog
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+}
 
 # ---------------------------------------------------------------------------
 # Test: Image build
@@ -154,22 +206,18 @@ test_container_starts() {
     claude_dir=$(mktemp -d)
 
     # Run the container with a trivial command to verify the entrypoint starts.
-    # We use a short timeout since without an API key the agent will fail,
-    # but we just want to see that the container and entrypoint script execute.
-    local output stderr_output
-    local exit_code=0
-
-    # Use timeout to prevent hanging — 60s allows for TypeScript compilation
-    # --userns=keep-id maps host UID to container's node user (UID 1000),
-    # so bind-mounted directories are writable inside the container.
-    output=$(echo '{}' | timeout 60 podman run -i --rm \
+    # Without an API key the agent will error out, but we just want to see
+    # that the container started and the entrypoint ran.
+    run_container_with_timeout 60 "${CONTAINER_NAME}-start" \
+        -i --rm \
         --userns=keep-id \
-        --name "${CONTAINER_NAME}-start" \
         -v "${TEMP_DIR}:/workspace/group" \
         -v "${claude_dir}:/home/node/.claude" \
-        "$IMAGE" 2>"${TEMP_DIR}/stderr.log") || exit_code=$?
+        "$IMAGE" <<< '{}'
 
-    stderr_output=$(cat "${TEMP_DIR}/stderr.log" 2>/dev/null || true)
+    local output stderr_output
+    output=$(cat "$CONTAINER_STDOUT" 2>/dev/null || true)
+    stderr_output=$(cat "$CONTAINER_STDERR" 2>/dev/null || true)
 
     # We accept any exit code here — without valid input/API key, the agent will
     # error out. We just want to verify the container started and the entrypoint ran.
@@ -221,25 +269,31 @@ ENDJSON
         input_json="${input_json//\"secrets\": \{\}/\"secrets\": \{\"CLAUDE_CODE_OAUTH_TOKEN\": \"${CLAUDE_CODE_OAUTH_TOKEN}\"\}}"
     fi
 
-    local output stderr_output
-    local exit_code=0
     local claude_dir
     claude_dir=$(mktemp -d)
 
-    # Run the full agent — allow up to 180s for the agent to respond
-    # The container entrypoint: compiles TypeScript, reads JSON from stdin, runs agent
-    # --userns=keep-id maps host UID to container's node user (UID 1000),
-    # so bind-mounted directories are writable inside the container.
-    output=$(echo "$input_json" | timeout 180 podman run -i --rm \
+    # Pipe input JSON via a temp file + redirect, since the background-process
+    # approach used by run_container_with_timeout can't pipe stdin directly.
+    local input_file
+    input_file=$(mktemp)
+    echo "$input_json" > "$input_file"
+
+    # Run the full agent — allow up to 180s for the agent to respond.
+    # Uses run_container_with_timeout for reliable cleanup (no orphaned containers).
+    run_container_with_timeout 180 "$CONTAINER_NAME" \
+        -i --rm \
         --userns=keep-id \
-        --name "$CONTAINER_NAME" \
         -v "${TEMP_DIR}:/workspace/group" \
         -v "${NANOCLAW_DIR}:/workspace/project:ro" \
         -v "${claude_dir}:/home/node/.claude" \
         -e "CLAUDE_MODEL=${CLAUDE_MODEL:-haiku}" \
-        "$IMAGE" 2>"${TEMP_DIR}/stderr.log") || exit_code=$?
+        "$IMAGE" < "$input_file"
 
-    stderr_output=$(cat "${TEMP_DIR}/stderr.log" 2>/dev/null || true)
+    local output stderr_output exit_code
+    output=$(cat "$CONTAINER_STDOUT" 2>/dev/null || true)
+    stderr_output=$(cat "$CONTAINER_STDERR" 2>/dev/null || true)
+    exit_code="$CONTAINER_EXIT_CODE"
+    rm -f "$input_file"
 
     # Test: sentinel markers present
     if echo "$output" | grep -qF -- "$START_SENTINEL" && echo "$output" | grep -qF -- "$END_SENTINEL"; then
