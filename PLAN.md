@@ -1,6 +1,6 @@
 # podman-nanoclaw-runtime — Vision & Implementation Plan
 
-**Current status:** Phase 1 — not started. No scripts or code exist yet; only planning docs.
+**Current status:** Phase 1 — all scripts implemented. Pending: integration testing with a real nanoclaw checkout + pinning a known-good commit. Phase 2 not started.
 
 ## Vision
 
