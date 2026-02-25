@@ -261,7 +261,17 @@ ENDJSON
         if [[ "$status" == "success" ]]; then
             pass "Response status is 'success'"
         else
+            local result
+            result=$(echo "$json_payload" | grep -o '"result"[[:space:]]*:[[:space:]]*"[^"]*"' \
+                | head -1 | sed 's/.*"result"[[:space:]]*:[[:space:]]*"//' | sed 's/"$//')
             fail "Response status is 'success'" "Got status: '${status}'"
+            if [[ -n "$result" ]]; then
+                echo "       Agent result: ${result}" >&2
+            fi
+            if [[ -n "$stderr_output" ]]; then
+                echo "       Container stderr (last 20 lines):" >&2
+                echo "$stderr_output" | tail -20 | sed 's/^/         /' >&2
+            fi
         fi
     else
         fail "Response status is 'success'" "No 'status' field found in response JSON"
