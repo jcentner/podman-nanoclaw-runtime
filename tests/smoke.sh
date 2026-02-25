@@ -150,29 +150,35 @@ test_image_build() {
 
 test_container_starts() {
     TEMP_DIR=$(mktemp -d)
+    local claude_dir
+    claude_dir=$(mktemp -d)
 
     # Run the container with a trivial command to verify the entrypoint starts.
     # We use a short timeout since without an API key the agent will fail,
     # but we just want to see that the container and entrypoint script execute.
-    local output
+    local output stderr_output
     local exit_code=0
 
-    # Use timeout to prevent hanging — 30s should be enough for entrypoint startup
-    output=$(echo '{}' | timeout 30 podman run -i --rm \
+    # Use timeout to prevent hanging — 60s allows for TypeScript compilation
+    output=$(echo '{}' | timeout 60 podman run -i --rm \
         --name "${CONTAINER_NAME}-start" \
         -v "${TEMP_DIR}:/workspace/group" \
-        "$IMAGE" 2>&1) || exit_code=$?
+        -v "${claude_dir}:/home/node/.claude" \
+        "$IMAGE" 2>"${TEMP_DIR}/stderr.log") || exit_code=$?
+
+    stderr_output=$(cat "${TEMP_DIR}/stderr.log" 2>/dev/null || true)
 
     # We accept any exit code here — without valid input/API key, the agent will
     # error out. We just want to verify the container started and the entrypoint ran.
     # Look for signs that the entrypoint script executed (TypeScript compilation, etc.)
-    if [[ -n "$output" ]]; then
+    if [[ -n "$output" || -n "$stderr_output" ]]; then
         pass "Container starts and runs entrypoint"
     else
         fail "Container starts and runs entrypoint" "No output from container (entrypoint may not have run)"
         return 1
     fi
 
+    rm -rf "$claude_dir"
     return 0
 }
 
@@ -212,15 +218,22 @@ ENDJSON
         input_json="${input_json//\"secrets\": \{\}/\"secrets\": \{\"CLAUDE_CODE_OAUTH_TOKEN\": \"${CLAUDE_CODE_OAUTH_TOKEN}\"\}}"
     fi
 
-    local output
+    local output stderr_output
     local exit_code=0
+    local claude_dir
+    claude_dir=$(mktemp -d)
 
-    # Run the full agent — allow up to 120s for the agent to respond
-    output=$(echo "$input_json" | timeout 120 podman run -i --rm \
+    # Run the full agent — allow up to 180s for the agent to respond
+    # The container entrypoint: compiles TypeScript, reads JSON from stdin, runs agent
+    output=$(echo "$input_json" | timeout 180 podman run -i --rm \
         --name "$CONTAINER_NAME" \
         -v "${TEMP_DIR}:/workspace/group" \
         -v "${NANOCLAW_DIR}:/workspace/project:ro" \
-        "$IMAGE" 2>/dev/null) || exit_code=$?
+        -v "${claude_dir}:/home/node/.claude" \
+        -e "CLAUDE_MODEL=${CLAUDE_MODEL:-haiku}" \
+        "$IMAGE" 2>"${TEMP_DIR}/stderr.log") || exit_code=$?
+
+    stderr_output=$(cat "${TEMP_DIR}/stderr.log" 2>/dev/null || true)
 
     # Test: sentinel markers present
     if echo "$output" | grep -q "$START_SENTINEL" && echo "$output" | grep -q "$END_SENTINEL"; then
@@ -228,6 +241,11 @@ ENDJSON
     else
         fail "Agent responds with valid sentinel-wrapped JSON" \
             "Sentinels not found in output (exit code: ${exit_code})"
+        if [[ -n "$stderr_output" ]]; then
+            echo "       Container stderr (last 20 lines):" >&2
+            echo "$stderr_output" | tail -20 | sed 's/^/         /' >&2
+        fi
+        rm -rf "$claude_dir"
         return 1
     fi
 
@@ -249,6 +267,7 @@ ENDJSON
         fail "Response status is 'success'" "No 'status' field found in response JSON"
     fi
 
+    rm -rf "$claude_dir"
     return 0
 }
 

@@ -8,6 +8,11 @@
 
 **Exit criteria:** User can run `setup-host.sh`, then `build-agent-image.sh`, then `run-nanoclaw.sh`, and interact with a nanoclaw agent through WhatsApp (or headless mode). Smoke test passes.
 
+**Integration test notes (post-implementation):**
+- Added `CLAUDE_MODEL` env var support (default: `haiku`) to `env.example`, `setup-host.sh` (interactive model prompt), and `smoke.sh`
+- Fixed smoke test: added `/home/node/.claude` mount (required by agent entrypoint), stderr capture on failure, increased timeout to 180s
+- Partial smoke test (credential-free) passes. Full test requires `ANTHROPIC_API_KEY`.
+
 **Remaining TODOs:**
 - Pin `DEFAULT_NANOCLAW_COMMIT` in `setup-host.sh` to a tested known-good hash (currently defaults to `main`)
 - Consider adding credential validation that blocks in interactive mode (currently warns but proceeds)
@@ -76,6 +81,7 @@ setup-host.sh [--nanoclaw-dir <path>] [--commit <hash>] [--non-interactive]
 - [x] In interactive mode: prompt for `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`
 - [ ] Validate that at least one credential is set (non-empty) — **TODO:** interactive mode warns but does not block; consider adding validation
 - [x] Prompt for `ASSISTANT_NAME` (default: `Andy`)
+- [x] Prompt for `CLAUDE_MODEL` (default: `haiku`, options: haiku/sonnet/opus)
 - [x] In non-interactive mode: expect env vars to be pre-set or `.env` to exist already
 - [x] Never echo secrets to stdout
 

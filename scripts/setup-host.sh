@@ -354,6 +354,10 @@ configure_env() {
         if [[ -n "${ASSISTANT_NAME:-}" ]]; then
             sed -i "s|^ASSISTANT_NAME=.*|ASSISTANT_NAME=${ASSISTANT_NAME}|" "$env_file"
         fi
+
+        if [[ -n "${CLAUDE_MODEL:-}" ]]; then
+            sed -i "s|^CLAUDE_MODEL=.*|CLAUDE_MODEL=${CLAUDE_MODEL}|" "$env_file"
+        fi
         return 0
     fi
 
@@ -393,6 +397,24 @@ configure_env() {
     else
         info "Using default assistant name: Andy"
     fi
+
+    # Prompt for model
+    echo ""
+    echo "Which Claude model should the agent use?"
+    echo "  1) haiku   (fast, cheapest — recommended)"
+    echo "  2) sonnet  (balanced)"
+    echo "  3) opus    (most capable, expensive)"
+    echo ""
+    read -r -p "Model [1]: " model_choice
+    local model
+    case "${model_choice:-1}" in
+        1) model="haiku" ;;
+        2) model="sonnet" ;;
+        3) model="opus" ;;
+        *) model="$model_choice" ;;
+    esac
+    sed -i "s|^CLAUDE_MODEL=.*|CLAUDE_MODEL=${model}|" "$env_file"
+    info "Model set to: ${model}"
 }
 
 # ---------------------------------------------------------------------------
