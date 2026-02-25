@@ -4,3 +4,6 @@
 
 # Private local files (notes, plans — not for public commits)
 .local/
+
+# nanoclaw (source for debug)
+nanoclaw/

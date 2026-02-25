@@ -132,7 +132,8 @@ trap cleanup EXIT INT TERM
 #   `timeout` kills the podman CLI client but the container keeps running as
 #   a separate process (managed by conmon). This leaves orphans that can't be
 #   stopped with Ctrl+C, requiring `wsl --shutdown` or manual `podman kill`.
-#   Instead, we run in the background and use `podman stop` for reliable cleanup.
+#   Instead, we launch a background watchdog that runs `podman stop` after
+#   the timeout, while podman run stays in the foreground (preserving stdin).
 
 CONTAINER_STDOUT=""
 CONTAINER_STDERR=""
@@ -146,22 +147,16 @@ run_container_with_timeout() {
     CONTAINER_STDERR=$(mktemp)
     CONTAINER_EXIT_CODE=0
 
-    # Launch podman run in the background
-    podman run --name "$cname" "$@" \
-        >"$CONTAINER_STDOUT" 2>"$CONTAINER_STDERR" &
-    local pid=$!
-
-    # Watchdog: kill after timeout
+    # Watchdog: stop the container after timeout (runs in background)
     (
         sleep "$timeout_secs"
-        if kill -0 "$pid" 2>/dev/null; then
-            podman stop -t 5 "$cname" &>/dev/null || true
-        fi
+        podman stop -t 5 "$cname" &>/dev/null || true
     ) &
     local watchdog_pid=$!
 
-    # Wait for podman run to finish (or be killed by watchdog)
-    wait "$pid" 2>/dev/null || CONTAINER_EXIT_CODE=$?
+    # Run podman in the foreground so stdin piping works correctly
+    podman run --name "$cname" "$@" \
+        >"$CONTAINER_STDOUT" 2>"$CONTAINER_STDERR" || CONTAINER_EXIT_CODE=$?
 
     # Clean up watchdog
     kill "$watchdog_pid" 2>/dev/null || true

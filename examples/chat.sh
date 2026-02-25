@@ -212,11 +212,19 @@ run_agent() {
 
     local exit_code=0
 
-    # Run container in background with podman stop as timeout mechanism.
+    # Run container in foreground with a background watchdog for timeout.
     # Using `timeout podman run` leaves orphaned containers because timeout
     # kills the podman CLI but the container keeps running via conmon.
     # --userns=keep-id maps host UID to container's node user (UID 1000),
     # so bind-mounted directories are writable inside the container.
+
+    # Watchdog: stop container after timeout (runs in background)
+    (
+        sleep "$TIMEOUT_SECONDS"
+        podman stop -t 5 "$container_name" &>/dev/null || true
+    ) &
+    local watchdog_pid=$!
+
     podman run -i --rm \
         --userns=keep-id \
         --name "$container_name" \
@@ -225,19 +233,7 @@ run_agent() {
         -v "${claude_dir}:/home/node/.claude" \
         -e "CLAUDE_MODEL=${MODEL}" \
         "$IMAGE" < "$input_file" \
-        >"$stdout_file" 2>"$stderr_file" &
-    local pid=$!
-
-    # Watchdog: stop container after timeout
-    (
-        sleep "$TIMEOUT_SECONDS"
-        if kill -0 "$pid" 2>/dev/null; then
-            podman stop -t 5 "$container_name" &>/dev/null || true
-        fi
-    ) &
-    local watchdog_pid=$!
-
-    wait "$pid" 2>/dev/null || exit_code=$?
+        >"$stdout_file" 2>"$stderr_file" || exit_code=$?
 
     # Clean up watchdog
     kill "$watchdog_pid" 2>/dev/null || true
