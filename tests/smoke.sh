@@ -236,7 +236,7 @@ ENDJSON
     stderr_output=$(cat "${TEMP_DIR}/stderr.log" 2>/dev/null || true)
 
     # Test: sentinel markers present
-    if echo "$output" | grep -q "$START_SENTINEL" && echo "$output" | grep -q "$END_SENTINEL"; then
+    if echo "$output" | grep -qF -- "$START_SENTINEL" && echo "$output" | grep -qF -- "$END_SENTINEL"; then
         pass "Agent responds with valid sentinel-wrapped JSON"
     else
         fail "Agent responds with valid sentinel-wrapped JSON" \
@@ -252,7 +252,7 @@ ENDJSON
     # Test: extract JSON and check status
     local json_payload
     json_payload=$(echo "$output" | sed -n "/${START_SENTINEL}/,/${END_SENTINEL}/p" \
-        | grep -v "$START_SENTINEL" | grep -v "$END_SENTINEL")
+        | grep -vF -- "$START_SENTINEL" | grep -vF -- "$END_SENTINEL")
 
     if echo "$json_payload" | grep -q '"status"'; then
         local status
