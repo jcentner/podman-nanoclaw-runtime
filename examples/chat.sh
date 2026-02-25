@@ -204,6 +204,7 @@ run_agent() {
     local container_name
     container_name="nanoclaw-chat-$(date +%s)"
     local claude_dir="${WORKSPACE_DIR}/.claude"
+    local ipc_input_dir="${WORKSPACE_DIR}/ipc/input"
     local input_file stdout_file stderr_file
     input_file=$(mktemp)
     stdout_file=$(mktemp)
@@ -212,13 +213,28 @@ run_agent() {
 
     local exit_code=0
 
-    # Run container in foreground with a background watchdog for timeout.
-    # Using `timeout podman run` leaves orphaned containers because timeout
-    # kills the podman CLI but the container keeps running via conmon.
+    # The agent-runner loops waiting for IPC messages after each query.
+    # We need to write a _close sentinel to the IPC input dir once the
+    # first response appears, so the container exits cleanly.
     # --userns=keep-id maps host UID to container's node user (UID 1000),
     # so bind-mounted directories are writable inside the container.
 
-    # Watchdog: stop container after timeout (runs in background)
+    # Watcher: monitor stdout for the end sentinel, then write _close
+    # so the agent-runner exits its IPC polling loop.
+    (
+        while true; do
+            if [[ -f "$stdout_file" ]] && grep -qF -- "$END_SENTINEL" "$stdout_file" 2>/dev/null; then
+                # Small delay to let the agent-runner reach its waitForIpcMessage poll
+                sleep 1
+                touch "${ipc_input_dir}/_close"
+                break
+            fi
+            sleep 0.5
+        done
+    ) &
+    local watcher_pid=$!
+
+    # Watchdog: stop container after timeout
     (
         sleep "$TIMEOUT_SECONDS"
         podman stop -t 5 "$container_name" &>/dev/null || true
@@ -235,8 +251,10 @@ run_agent() {
         "$IMAGE" < "$input_file" \
         >"$stdout_file" 2>"$stderr_file" || exit_code=$?
 
-    # Clean up watchdog
+    # Clean up watcher and watchdog
+    kill "$watcher_pid" 2>/dev/null || true
     kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watcher_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
 
     local output

@@ -1,21 +1,24 @@
 # Phase 1: Core Setup Scripts (MVP)
 
-**Status:** All scripts implemented. Pending: integration testing with a real nanoclaw checkout + pinning a known-good commit.
+**Status:** Complete — all scripts implemented, smoke test passes 4/4 on WSL2.
 
 **Goal:** Get a single nanoclaw instance running on Podman — from zero to working agent in one session.
 
 **Entry criteria:** User has a working rootless Podman installation with `podman-docker` shim (via podman-wsl-setup on WSL2, or manual setup on bare-metal).
 
-**Exit criteria:** User can run `setup-host.sh`, then `build-agent-image.sh`, then `run-nanoclaw.sh`, and interact with a nanoclaw agent through WhatsApp (or headless mode). Smoke test passes.
+**Exit criteria:** User can run `setup-host.sh`, then `build-agent-image.sh`, then `run-nanoclaw.sh`, and interact with a nanoclaw agent through WhatsApp (or headless mode via `chat.sh`). Smoke test passes.
 
-**Integration test notes (post-implementation):**
-- Added `CLAUDE_MODEL` env var support (default: `haiku`) to `env.example`, `setup-host.sh` (interactive model prompt), and `smoke.sh`
-- Fixed smoke test: added `/home/node/.claude` mount (required by agent entrypoint), stderr capture on failure, increased timeout to 180s
-- Partial smoke test (credential-free) passes. Full test requires `ANTHROPIC_API_KEY`.
+**Integration test findings (documented in [docs/DECISIONS.md](DECISIONS.md)):**
+- ADR-001: `--userns=keep-id` required for rootless Podman bind-mount writability
+- ADR-002: Foreground podman + background watchdog pattern for reliable timeouts
+- ADR-003: `grep -F --` for sentinel matching (leading `---` parsed as grep option)
+- ADR-004: `CLAUDE_MODEL` env var for model selection (default: `haiku`)
+- ADR-005: `examples/chat.sh` headless wrapper for direct container invocation
 
 **Remaining TODOs:**
 - Pin `DEFAULT_NANOCLAW_COMMIT` in `setup-host.sh` to a tested known-good hash (currently defaults to `main`)
 - Consider adding credential validation that blocks in interactive mode (currently warns but proceeds)
+- Set `userns = "keep-id"` in `containers.conf` docs/setup for nanoclaw's own container-runner.ts compatibility
 
 ---
 

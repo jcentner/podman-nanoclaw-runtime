@@ -273,6 +273,21 @@ ENDJSON
     input_file=$(mktemp)
     echo "$input_json" > "$input_file"
 
+    # The agent-runner loops waiting for IPC messages after each query.
+    # Monitor stdout for end sentinel, then write _close so it exits.
+    local ipc_input_dir="${TEMP_DIR}/ipc/input"
+    (
+        while true; do
+            if [[ -f "$CONTAINER_STDOUT" ]] && grep -qF -- "$END_SENTINEL" "$CONTAINER_STDOUT" 2>/dev/null; then
+                sleep 1
+                touch "${ipc_input_dir}/_close"
+                break
+            fi
+            sleep 0.5
+        done
+    ) &
+    local ipc_watcher_pid=$!
+
     # Run the full agent — allow up to 180s for the agent to respond.
     # Uses run_container_with_timeout for reliable cleanup (no orphaned containers).
     run_container_with_timeout 180 "$CONTAINER_NAME" \
@@ -283,6 +298,10 @@ ENDJSON
         -v "${claude_dir}:/home/node/.claude" \
         -e "CLAUDE_MODEL=${CLAUDE_MODEL:-haiku}" \
         "$IMAGE" < "$input_file"
+
+    # Clean up IPC watcher
+    kill "$ipc_watcher_pid" 2>/dev/null || true
+    wait "$ipc_watcher_pid" 2>/dev/null || true
 
     local output stderr_output exit_code
     output=$(cat "$CONTAINER_STDOUT" 2>/dev/null || true)
