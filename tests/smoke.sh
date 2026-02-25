@@ -328,6 +328,7 @@ ENDJSON
             if [[ -n "$result" ]]; then
                 echo "       Agent result: ${result}" >&2
             fi
+            echo "       Response JSON: ${json_payload}" >&2
             if [[ -n "$stderr_output" ]]; then
                 echo "       Container stderr (last 20 lines):" >&2
                 echo "$stderr_output" | tail -20 | sed 's/^/         /' >&2
